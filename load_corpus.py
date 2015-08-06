@@ -2,12 +2,13 @@
 # -*- coding: utf-8 -*-
 
 import py2neo
-from py2neo.cypher import MergeNode
+from py2neo.cypher import CreateNode, MergeNode
+py2neo.packages.httpstream.http.socket_timeout = 600
 
 nodesdone = {}
 class NeoBatch(object):
 
-    def __init__(self, graph, processBatch=500, maxTransactions=10000):
+    def __init__(self, graph, processBatch=150, maxTransactions=10000):
         self.limit = processBatch
         self.max = maxTransactions
         self.nodesdone = {}
@@ -22,13 +23,12 @@ class NeoBatch(object):
         res = self.tx.process()
         self.done += len(res)
         self.todo = 0
-        print "processed", self.done
         return res
 
     def commit(self):
         res = self.tx.commit()
         self.done += len(res)
-        print "committed", self.done
+        print "Commit", self.done
         return res
 
     def reset(self):
@@ -41,21 +41,32 @@ class NeoBatch(object):
         if self.done + self.todo > self.max:
             self.reset()
         if self.todo == self.limit:
-            self.process()
+            #self.process()
+            self.reset()
 
 def add_stem(tx, lru, page=False):
+    # Check cache
     if lru in nodesdone:
         if page and not nodesdone[lru]:
             tx.append(MergeNode("Stem", "lru", lru).set(page=True))
             nodesdone[lru] = True
         return
 
-    stems = [s for s in lru.split('|') if s]
+    # Check graph
+    exists = graph.cypher.execute_one("MATCH (p:Stem {lru: {L}}) RETURN p", {"L": lru})
+    if exists:
+        if page and not exists["page"]:
+            tx.append(MergeNode("Stem", "lru", lru).set(page=True))
+        nodesdone[lru] = page or exists["page"]
+        return
 
+    # Add stem node
+    stems = [s for s in lru.split('|') if s]
     stem = stems.pop()
-    tx.append(MergeNode("Stem", "lru", lru).set(label=(stem[2:] if len(stem) > 2 else ""), stem=stem[0], page=page))
+    tx.append(CreateNode("Stem", "lru", lru).set(label=(stem[2:] if len(stem) > 2 else ""), stem=stem[0], page=page))
     nodesdone[lru] = page
 
+    # Add parent stem nodes and heritage links
     if len(stems):
         parent = "|".join(stems) + "|"
         add_stem(tx, parent)
@@ -87,7 +98,6 @@ if __name__ == "__main__":
     #graph.schema.create_uniqueness_constraint('Stem', 'lru')
 
     tx = NeoBatch(graph)
-    #tx = graph.cypher.begin()
 
     # Collect WebEntities from Hyphe
     import jsonrpclib
@@ -100,13 +110,13 @@ if __name__ == "__main__":
     for WE in hyphe_core.store.get_webentities([], ['status', 'name'], -1, 0, True, False, False, corpus)["result"]:
         print WE["status"], WE["name"]
         load_webentity(tx, WE["name"], WE["status"], WE["lru_prefixes"])
-    tx.process()
+    tx.reset()
 
     # Collect pages from Mongo
     from pymongo import MongoClient
     pages = MongoClient()[hyphe]["%s.pages" % corpus]
     for page in pages.find({"status": 200}, fields=["lru", "lrulinks"]):
-        print page["lru"]
+        print page["lru"], len(page["lrulinks"])
         load_page_with_links(tx, page["lru"], page["lrulinks"])
     tx.commit()
 
