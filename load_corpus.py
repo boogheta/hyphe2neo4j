@@ -1,34 +1,28 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
+from time import time
 import py2neo
 from py2neo.cypher import CreateNode, MergeNode
 py2neo.packages.httpstream.http.socket_timeout = 600
 
-nodesdone = {}
 class NeoBatch(object):
 
-    def __init__(self, graph, processBatch=150, maxTransactions=10000):
+    def __init__(self, graph, processBatch=200, cacheNodes={}):
         self.limit = processBatch
-        self.max = maxTransactions
-        self.nodesdone = {}
+        self.nodesdone = cacheNodes
         self.init()
 
     def init(self):
         self.tx = graph.cypher.begin()
         self.todo = 0
-        self.done = 0
-
-    def process(self):
-        res = self.tx.process()
-        self.done += len(res)
-        self.todo = 0
-        return res
 
     def commit(self):
+        t = time()
         res = self.tx.commit()
-        self.done += len(res)
-        print "Commit", self.done
+        t2 = time() - t
+        rate = len(res)/t2
+        print "Commit", len(res), "in", t2, "s ->", "%s/s" % rate
         return res
 
     def reset(self):
@@ -38,51 +32,49 @@ class NeoBatch(object):
     def append(self, transaction, *args, **kwargs):
         self.todo += 1
         self.tx.append(transaction, *args, **kwargs)
-        if self.done + self.todo > self.max:
-            self.reset()
         if self.todo == self.limit:
-            #self.process()
             self.reset()
 
-def add_stem(tx, lru, page=False):
+def add_stem(tx, lru, page=False, checkGraph=False):
     # Check cache
-    if lru in nodesdone:
-        if page and not nodesdone[lru]:
+    if lru in tx.nodesdone:
+        if page and not tx.nodesdone[lru]:
             tx.append(MergeNode("Stem", "lru", lru).set(page=True))
-            nodesdone[lru] = True
+            tx.nodesdone[lru] = True
         return
 
-    # Check graph
-    exists = graph.cypher.execute_one("MATCH (p:Stem {lru: {L}}) RETURN p", {"L": lru})
-    if exists:
-        if page and not exists["page"]:
-            tx.append(MergeNode("Stem", "lru", lru).set(page=True))
-        nodesdone[lru] = page or exists["page"]
-        return
+    ## Check graph
+    if checkGraph:
+        exists = graph.cypher.execute_one("MATCH (p:Stem {lru: {L}}) RETURN p", {"L": lru})
+        if exists:
+            if page and not exists["page"]:
+                tx.append(MergeNode("Stem", "lru", lru).set(page=True))
+            tx.nodesdone[lru] = page or exists["page"]
+            return
 
     # Add stem node
     stems = [s for s in lru.split('|') if s]
     stem = stems.pop()
-    tx.append(CreateNode("Stem", "lru", lru).set(label=(stem[2:] if len(stem) > 2 else ""), stem=stem[0], page=page))
-    nodesdone[lru] = page
+    tx.append(CreateNode("Stem", lru=lru, name=(stem[2:] if len(stem) > 2 else ""), stem=stem[0], page=page))
+    tx.nodesdone[lru] = page
 
     # Add parent stem nodes and heritage links
     if len(stems):
         parent = "|".join(stems) + "|"
         add_stem(tx, parent)
-        tx.append("MATCH (p:Stem {lru:{P}}), (c:Stem {lru: {C}}) CREATE UNIQUE (p)-[:H]->(c)", {"P": parent, "C": lru})
+        tx.append("MATCH (p:Stem {lru:{P}}), (c:Stem {lru: {C}}) CREATE UNIQUE (p)-[:HERIT]->(c)", {"P": parent, "C": lru})
 
 def load_page_with_links(tx, pagelru, lrulinks):
     add_stem(tx, pagelru, True)
     for lru in lrulinks:
         add_stem(tx, lru, True)
-        tx.append("MATCH (p:Stem {lru:{P}}), (l:Stem {lru:{C}}) CREATE UNIQUE (p)-[:L]->(l)", {"P": pagelru, "C": lru})
+        tx.append("MATCH (p:Stem {lru:{P}}), (l:Stem {lru:{L}}) CREATE UNIQUE (p)-[:LINK]->(l)", {"P": pagelru, "L": lru})
 
 def load_webentity(tx, name, status, prefixes):
-    tx.append(MergeNode("WebEntity", "name", name).set(status=status))
+    tx.append(CreateNode("WebEntity", name=name, status=status))
     for prefix in prefixes:
         add_stem(tx, prefix)
-        tx.append("MATCH (w:WebEntity {name:{W}}), (p:Stem {lru:{L}}) CREATE UNIQUE (w)-[:P]->(p)", {"W": name, "L": prefix})
+        tx.append("MATCH (w:WebEntity {name:{W}}), (p:Stem {lru:{P}}) CREATE UNIQUE (w)-[:PREFIX]->(p)", {"W": name, "P": prefix})
 
 if __name__ == "__main__":
     hyphe_urlapi = "http://localhost/hyphe-api/"
@@ -93,11 +85,47 @@ if __name__ == "__main__":
     py2neo.authenticate("localhost:7474", "neo4j", "neo4j")
     graph = py2neo.Graph("http://localhost:7474/db/data/")
 
-    # ResetDB
-    #graph.delete_all()
-    #graph.schema.create_uniqueness_constraint('Stem', 'lru')
+    # Prepare filesystem
+    import os, sys, json
+    pagesfile = os.path.join(".cache", "pages.done")
+    wesfile = os.path.join(".cache", "webentities.done")
+    nodesfile = os.path.join(".cache", "nodes.done")
+    if not os.path.isdir(".cache"):
+        os.makedirs(".cache")
+        open(pagesfile, "w").close()
+        open(wesfile, "w").close()
+        open(nodesfile, "w").close()
 
-    tx = NeoBatch(graph)
+    # ResetDB
+    if len(sys.argv) > 1:
+        graph.delete_all()
+        #graph.schema.create_uniqueness_constraint('Stem', 'lru')
+        pagesdone = []
+        wesdone = []
+        nodesdone = {}
+    # Or reload cache
+    else:
+        with open(pagesfile, "r") as f:
+            pagesdone = json.load(f)
+        with open(wesfile, "r") as f:
+            wesdone = json.load(f)
+        with open(nodesfile, "r") as f:
+            nodesdone = json.load(f)
+
+    tx = NeoBatch(graph, cacheNodes=nodesdone)
+    # Clean close on Ctrl+C or at finish
+    from signal import signal, SIGINT
+    def clean_close(*args):
+        print "Stopping..."
+        tx.commit()
+        with open(pagesfile, "w") as f:
+            json.dump(pagesdone, f)
+        with open(wesfile, "w") as f:
+            json.dump(wesdone, f)
+        with open(nodesfile, "w") as f:
+            json.dump(tx.nodesdone, f)
+        sys.exit(0)
+    signal(SIGINT, clean_close)
 
     # Collect WebEntities from Hyphe
     import jsonrpclib
@@ -108,16 +136,22 @@ if __name__ == "__main__":
         logging.error('Could not initiate connection to hyphe core')
         exit(1)
     for WE in hyphe_core.store.get_webentities([], ['status', 'name'], -1, 0, True, False, False, corpus)["result"]:
+        if WE["id"] in wesdone:
+            continue
         print WE["status"], WE["name"]
         load_webentity(tx, WE["name"], WE["status"], WE["lru_prefixes"])
+        wesdone.append(WE["id"])
     tx.reset()
 
     # Collect pages from Mongo
     from pymongo import MongoClient
     pages = MongoClient()[hyphe]["%s.pages" % corpus]
     for page in pages.find({"status": 200}, fields=["lru", "lrulinks"]):
+        if page["lru"] in pagesdone:
+            continue
         print page["lru"], len(page["lrulinks"])
         load_page_with_links(tx, page["lru"], page["lrulinks"])
-    tx.commit()
+        pagesdones.append(page["lru"])
 
+    clean_close()
 
