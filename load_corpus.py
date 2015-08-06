@@ -11,6 +11,8 @@ class NeoBatch(object):
     def __init__(self, graph, processBatch=200, cacheNodes={}):
         self.limit = processBatch
         self.nodesdone = cacheNodes
+        self.total = 0
+        self.t0 = time()
         self.init()
 
     def init(self):
@@ -20,9 +22,10 @@ class NeoBatch(object):
     def commit(self):
         t = time()
         res = self.tx.commit()
+        self.total += len(res)
         t2 = time() - t
         rate = len(res)/t2
-        print "Commit", len(res), "in", t2, "s ->", "%s/s" % rate
+        print "Commited %s in %ss -> %s/s" % (len(res), t2, rate)
         return res
 
     def reset(self):
@@ -124,6 +127,8 @@ if __name__ == "__main__":
             json.dump(wesdone, f)
         with open(nodesfile, "w") as f:
             json.dump(tx.nodesdone, f)
+        t1 = time() - tx.t0
+        print "%stransactions done in %ss -> %s/s" % (tx.total, t1, tx.total/t1)
         sys.exit(0)
     signal(SIGINT, clean_close)
 
