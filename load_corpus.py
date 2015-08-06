@@ -38,7 +38,7 @@ class NeoBatch(object):
         if self.todo == self.limit:
             self.reset()
 
-def add_stem(tx, lru, page=False, checkGraph=False):
+def add_stem(tx, lru, page=False, checkGraph=True):
     # Check cache
     if lru in tx.nodesdone:
         if page and not tx.nodesdone[lru]:
@@ -59,6 +59,7 @@ def add_stem(tx, lru, page=False, checkGraph=False):
     stems = [s for s in lru.split('|') if s]
     stem = stems.pop()
     tx.append(CreateNode("Stem", lru=lru, name=(stem[2:] if len(stem) > 2 else ""), stem=stem[0], page=page))
+    #tx.append(MergeNode("Stem", "lru", lru).set(name=(stem[2:] if len(stem) > 2 else ""), stem=stem[0], page=page))
     tx.nodesdone[lru] = page
 
     # Add parent stem nodes and heritage links
@@ -75,6 +76,7 @@ def load_page_with_links(tx, pagelru, lrulinks):
 
 def load_webentity(tx, weid, name, status, prefixes):
     tx.append(CreateNode("WebEntity", id=weid, name=name, status=status))
+    #tx.append(MergeNode("WebEntity", "id", weid).set(name=name, status=status))
     for prefix in prefixes:
         add_stem(tx, prefix)
         tx.append("MATCH (w:WebEntity {id:{W}}), (p:Stem {lru:{P}}) CREATE UNIQUE (w)-[:PREFIX]->(p)", {"W": weid, "P": prefix})
@@ -140,23 +142,30 @@ if __name__ == "__main__":
     except:
         logging.error('Could not initiate connection to hyphe core')
         exit(1)
-    for WE in hyphe_core.store.get_webentities([], ['status', 'name'], -1, 0, True, False, False, corpus)["result"]:
-        if WE["id"] in wesdone:
-            continue
-        print WE["status"], WE["name"]
-        load_webentity(tx, WE["id"], WE["name"], WE["status"], WE["lru_prefixes"])
-        wesdone.append(WE["id"])
-    tx.reset()
+    try:
+        for WE in hyphe_core.store.get_webentities([], ['status', 'name'], -1, 0, True, False, False, corpus)["result"]:
+            if WE["id"] in wesdone:
+                continue
+            print WE["status"], WE["name"]
+            load_webentity(tx, WE["id"], WE["name"], WE["status"], WE["lru_prefixes"])
+            wesdone.append(WE["id"])
+        tx.reset()
 
-    # Collect pages from Mongo
-    from pymongo import MongoClient
-    pages = MongoClient()[hyphe]["%s.pages" % corpus]
-    for page in pages.find({"status": 200}, fields=["lru", "lrulinks"]):
-        if page["lru"] in pagesdone:
-            continue
-        print page["lru"], len(page["lrulinks"])
-        load_page_with_links(tx, page["lru"], page["lrulinks"])
-        pagesdones.append(page["lru"])
+        # Collect pages from Mongo
+        from pymongo import MongoClient
+        pages = MongoClient()[hyphe]["%s.pages" % corpus]
+        todopages = pages.find({"status": 200}).count()
+        i = 0
+        for page in pages.find({"status": 200}, fields=["lru", "lrulinks"]):
+            i += 1
+            if page["lru"] in pagesdone:
+                continue
+            print "%s/%s" % (i, todopages), page["lru"], len(page["lrulinks"])
+
+            load_page_with_links(tx, page["lru"], page["lrulinks"])
+            pagesdone.append(page["lru"])
+    except Exception as e:
+        print "Crashed...", type(e), e
 
     clean_close()
 
