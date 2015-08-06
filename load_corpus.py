@@ -70,11 +70,11 @@ def load_page_with_links(tx, pagelru, lrulinks):
         add_stem(tx, lru, True)
         tx.append("MATCH (p:Stem {lru:{P}}), (l:Stem {lru:{L}}) CREATE UNIQUE (p)-[:LINK]->(l)", {"P": pagelru, "L": lru})
 
-def load_webentity(tx, name, status, prefixes):
-    tx.append(CreateNode("WebEntity", name=name, status=status))
+def load_webentity(tx, weid, name, status, prefixes):
+    tx.append(CreateNode("WebEntity", id=weid, name=name, status=status))
     for prefix in prefixes:
         add_stem(tx, prefix)
-        tx.append("MATCH (w:WebEntity {name:{W}}), (p:Stem {lru:{P}}) CREATE UNIQUE (w)-[:PREFIX]->(p)", {"W": name, "P": prefix})
+        tx.append("MATCH (w:WebEntity {id:{W}}), (p:Stem {lru:{P}}) CREATE UNIQUE (w)-[:PREFIX]->(p)", {"W": weid, "P": prefix})
 
 if __name__ == "__main__":
     hyphe_urlapi = "http://localhost/hyphe-api/"
@@ -139,7 +139,7 @@ if __name__ == "__main__":
         if WE["id"] in wesdone:
             continue
         print WE["status"], WE["name"]
-        load_webentity(tx, WE["name"], WE["status"], WE["lru_prefixes"])
+        load_webentity(tx, WE["id"], WE["name"], WE["status"], WE["lru_prefixes"])
         wesdone.append(WE["id"])
     tx.reset()
 
