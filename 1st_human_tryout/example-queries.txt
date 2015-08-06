@@ -1,0 +1,7 @@
+load csv with headers from "http://10.1.208.150:8000/nodes.csv" as lines create ( { _id: lines.id, type:lines.type, name:lines.name, page:lines.page }  )
+
+match (n {type:'WE'} ) set n:WE
+
+match (n {type:'Node'} ) set n:Node
+
+MATCH(n {name:"SCPO"})-[r:PREFIX]->(:Node)-[r2:PARENT*0..]->(n3:Node) WHERE NOT (:WE)-[:PREFIX]->(n3) return DISTINCT n3

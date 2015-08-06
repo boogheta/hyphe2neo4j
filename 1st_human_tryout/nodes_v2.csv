@@ -1,0 +1,14 @@
+:ID,:LABEL,name,page:boolean
+WE0,WE,SCPO,false
+WE1,WE,AOUT,false
+WE2,WE,BIB,false
+0,Node,s:http,false
+1,Node,h:fr,false
+2,Node,h:sciences-po,false
+3,Node,h:www,true
+4,Node,h:medialab,false
+5,Node,p:bibliotheque,true
+6,Node,p:2015,false
+7,Node,p:08,false
+8,Node,p:article,true
+9,Node,p:index,true

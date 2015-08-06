@@ -1,0 +1,14 @@
+id,type,name,page
+WE0,WE,SCPO,
+WE1,WE,AOUT,
+WE2,WE,BIB,
+0,Node,s:http,
+1,Node,h:fr,
+2,Node,h:sciences-po,
+3,Node,h:www,1
+4,Node,h:medialab,
+5,Node,p:bibliotheque,1
+6,Node,p:2015,
+7,Node,p:08,
+8,Node,p:article,1
+9,Node,p:index,1
