@@ -1,0 +1,7 @@
+MATCH (we:WebEntity)-[:P]->(:Stem)-[rels:H*0..]->(n:Stem)
+WHERE ALL(n IN extract(rel in rels | endNode(rel)) WHERE NOT (n)<-[:P]-())
+
+MATCH (n)-[:L]-()<-[:H*0..]-()<-[:P]-(twe:WebEntity)
+WHERE twe <> we
+RETURN DISTINCT we, twe;
+
