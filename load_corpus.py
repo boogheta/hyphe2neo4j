@@ -8,7 +8,7 @@ py2neo.packages.httpstream.http.socket_timeout = 600
 
 class NeoBatch(object):
 
-    def __init__(self, graph, processBatch=200, cacheNodes={}):
+    def __init__(self, graph, processBatch=500, cacheNodes={}):
         self.limit = processBatch
         self.nodesdone = cacheNodes
         self.total = 0
@@ -104,6 +104,7 @@ if __name__ == "__main__":
     # ResetDB
     if len(sys.argv) > 1:
         graph.delete_all()
+        graph.schema.get_or_create_index('Stem', 'lru')
         #graph.schema.create_uniqueness_constraint('Stem', 'lru')
         pagesdone = []
         wesdone = []
